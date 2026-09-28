@@ -66,7 +66,11 @@ jobs:
           WAIT_MINUTES: ${{ inputs.wait-minutes }}
           COOLIFY_API_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
         run: |
-          set -uo pipefail
+          # GitHub startet `run` mit `bash -e`. Das muss aus: Ein gescheiterter Abruf beim
+          # Warten (Timeout, Verbindung abgelehnt, während der Container wechselt) ist
+          # eine Antwort wie jede andere und wird wieder versucht, statt den Lauf zu beenden
+          # (PuckHub, Lauf 36485172179: curl-Timeout, Exit 28, alles lief längst).
+          set +e -uo pipefail
 
           revision="${GITHUB_SHA:?}"
           coolify="${COOLIFY_URL%/}"
