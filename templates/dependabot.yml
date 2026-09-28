@@ -1,0 +1,37 @@
+# Vorlage aus sascha-gruesshaber/ci. `package-ecosystem` im ersten Block an das Projekt
+# anpassen (npm, bun; pnpm-Projekte nutzen "npm"), Gruppen für Pakete, die sich nur
+# gemeinsam bewegen dürfen, ergänzen.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    # Kaputte Releases werden meist in den ersten Tagen zurückgezogen. Sicherheitsupdates
+    # laufen an der Wartezeit vorbei.
+    cooldown:
+      default-days: 7
+    # Alles Kleine in einem PR: ein CI-Lauf, ein Merge, ein Deployment. Hauptversionen
+    # bekommen je einen eigenen PR und werden nicht automatisch zusammengeführt.
+    groups:
+      minor-und-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
