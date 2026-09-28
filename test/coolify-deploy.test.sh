@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.."
 work=$(mktemp -d)
 trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$work"' EXIT
 
-# Genau der `run`-Block, der auch in GitHub läuft.
+# Genau der `run`-Block, der auch in GitHub läuft. GitHub startet ihn mit `bash -e`, der
+# Test deshalb auch (siehe run_case).
 python3 - > "$work/deploy.sh" <<'EOF'
 import yaml
 wf = yaml.safe_load(open(".github/workflows/coolify-deploy.yml"))
@@ -41,7 +42,7 @@ run_case() {
     COOLIFY_URL="$base" COOLIFY_API_TOKEN=geheim WAIT_MINUTES=10 \
     UUIDS="app1" REVISION_URLS="" URLS="" POLL_INTERVAL=1 WAIT_SECONDS=10 \
     "${@//@BASE@/$base}" \
-    bash "$work/deploy.sh" > "$work/out" 2>&1 || code=$?
+    bash -e "$work/deploy.sh" > "$work/out" 2>&1 || code=$?
   if [ "$code" = "$want_code" ] && grep -qF -- "$want_text" "$work/out"; then
     echo "ok    ${name}"
   else
@@ -67,6 +68,12 @@ run_case "eine UUID abgelehnt, die andere trotzdem versucht" 1 "Stoße app3 an" 
   UUIDS="fehlt-app2 app3"
 run_case "abgelehnte UUID wird gemeldet" 1 "fehlt-app2 abgelehnt" UUIDS="fehlt-app2 app3"
 run_case "URL antwortet nie mit 2xx" 1 "HTTP 503" URLS="@BASE@/kaputt" WAIT_SECONDS=2
+# curl scheitert (hier: Verbindung abgelehnt, in PuckHub war es ein Timeout, Exit 28).
+# Das ist eine Antwort wie jede andere und darf das Warten nicht beenden.
+run_case "nicht erreichbare URL wird weiter abgefragt" 1 "antwortet nach 2 s nicht mit 2xx" \
+  URLS="http://127.0.0.1:1/" WAIT_SECONDS=2
+run_case "nicht erreichbare Revisions-URL wird weiter abgefragt" 1 "meldet nach 2 s nicht die Revision" \
+  REVISION_URLS="http://127.0.0.1:1/" WAIT_SECONDS=2
 
 start_server 600
 run_case "alte Revision läuft weiter" 1 "\"revision\":\"0000000000" \
