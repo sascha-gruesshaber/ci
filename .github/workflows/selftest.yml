@@ -1,0 +1,69 @@
+name: selftest
+
+# Probiert die Bausteine so aus, wie ein Projekt sie aufruft, bevor ein neuer v1-Tag
+# gesetzt wird. Nur von Hand: Er pusht nach ghcr.io/sascha-gruesshaber/ci/selftest.
+# coolify-deploy.yml ruft er nicht auf, dafür gibt es keine Test-Anwendung. Dessen Logik
+# prüft test/coolify-deploy.test.sh gegen einen Dummy-Server, hier und in ci.yml.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      packages: write
+    # Der Stand dieses Branches, nicht @v1.
+    uses: ./.github/workflows/docker-image.yml
+    with:
+      image: ghcr.io/${{ github.repository }}/selftest
+      dockerfile: test/Dockerfile
+      context: test
+      target: runner
+      build-args: |
+        SELFTEST_GRUSS=hallo
+      smoke-test: bash test/smoke-test.sh
+
+  # Liegt das Image wirklich mit beiden Tags in der Registry, und stimmt der Output?
+  pushed:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags und Labels prüfen
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+        run: |
+          set -euo pipefail
+          expected="ghcr.io/${GITHUB_REPOSITORY,,}/selftest:sha-${GITHUB_SHA::12}"
+          if [ "$IMAGE" != "$expected" ]; then
+            echo "::error::Output image ist '${IMAGE}' statt '${expected}'"
+            exit 1
+          fi
+          for ref in "$IMAGE" "${IMAGE%:*}:main"; do
+            revision=$(docker buildx imagetools inspect "$ref" \
+              --format '{{ index .Image.Config.Labels "org.opencontainers.image.revision" }}')
+            echo "${ref}: ${revision}"
+            if [ "$revision" != "$GITHUB_SHA" ]; then
+              echo "::error::${ref} trägt die Revision '${revision}' statt '${GITHUB_SHA}'"
+              exit 1
+            fi
+          done
+
+  deploy-logic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash test/coolify-deploy.test.sh
