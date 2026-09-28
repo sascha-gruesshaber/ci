@@ -1,0 +1,178 @@
+name: coolify-deploy
+
+# Stößt Coolify an und wartet, bis der neue Stand wirklich läuft. Vertrag: README.md,
+# Abschnitt „coolify-deploy.yml“.
+on:
+  workflow_call:
+    inputs:
+      uuids:
+        description: UUIDs der Coolify-Anwendungen, durch Leerzeichen oder Zeilen getrennt
+        required: true
+        type: string
+      revision-urls:
+        description: URLs, deren Body "revision":"<github.sha>" enthalten muss
+        type: string
+        default: ""
+      urls:
+        description: URLs, die nur mit HTTP 2xx antworten müssen
+        type: string
+        default: ""
+      environment:
+        description: GitHub-Environment
+        type: string
+        default: production
+      environment-url:
+        description: URL, die GitHub am Environment anzeigt
+        type: string
+        default: ""
+      coolify-url:
+        type: string
+        default: https://coolify.gruesshaber.eu
+      wait-minutes:
+        description: Wie lange auf die neue Revision gewartet wird
+        type: number
+        default: 10
+    secrets:
+      COOLIFY_API_TOKEN:
+        required: true
+
+jobs:
+  deploy:
+    name: Ausliefern
+    runs-on: ubuntu-latest
+    # Das eigentliche Warten begrenzt `wait-minutes` im Skript. Dies ist nur das Netz
+    # darunter; Ausdrücke können nicht rechnen.
+    timeout-minutes: 60
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ inputs.environment-url }}
+    # Die Container migrieren beim Start. Ein abgebrochenes Deployment kann eine halbe
+    # Migration hinterlassen, deshalb laufen sie nacheinander und nie abgebrochen.
+    concurrency:
+      group: deploy-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      # Das Skript steht bewusst hier und nicht in einer eigenen Datei: Der Aufrufer
+      # checkt dieses private Repo nicht aus, sein GITHUB_TOKEN darf es nicht lesen.
+      # test/coolify-deploy.test.sh zieht den Block heraus und prüft ihn gegen einen
+      # Dummy-Server. Deshalb stehen darin keine `${{ … }}`-Ausdrücke, alles kommt über
+      # die Umgebung.
+      - name: Anstoßen und prüfen
+        env:
+          UUIDS: ${{ inputs.uuids }}
+          REVISION_URLS: ${{ inputs.revision-urls }}
+          URLS: ${{ inputs.urls }}
+          COOLIFY_URL: ${{ inputs.coolify-url }}
+          WAIT_MINUTES: ${{ inputs.wait-minutes }}
+          COOLIFY_API_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          revision="${GITHUB_SHA:?}"
+          coolify="${COOLIFY_URL%/}"
+          # Nur für den Test überschreibbar.
+          interval="${POLL_INTERVAL:-10}"
+          wait_seconds="${WAIT_SECONDS:-$(( WAIT_MINUTES * 60 ))}"
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+          # Trennt an Leerzeichen und Zeilenumbrüchen, ohne Globbing.
+          read -r -d '' -a uuids <<< "$UUIDS" || true
+          read -r -d '' -a revision_urls <<< "$REVISION_URLS" || true
+          read -r -d '' -a plain_urls <<< "$URLS" || true
+
+          if [ "${#uuids[@]}" -eq 0 ]; then
+            echo "::error::Keine Coolify-UUID übergeben. Fehlt die Repo-Variable COOLIFY_UUID (bzw. COOLIFY_UUID_<APP>)?"
+            exit 1
+          fi
+          if [ -z "${COOLIFY_API_TOKEN:-}" ]; then
+            echo "::error::Das Secret COOLIFY_API_TOKEN ist leer."
+            exit 1
+          fi
+
+          {
+            echo "### Deployment"
+            echo
+            echo "Revision \`${revision}\`"
+            echo
+          } >> "$summary"
+
+          # 1. Anstoßen. POST mit den Parametern in der Query, so steht es in Coolifys
+          # OpenAPI-Spezifikation. GET antwortet seit Coolify 4.3.2 mit 405, ein JSON-Body
+          # läuft ins Leere. Jede UUID wird versucht; lehnt Coolify eine ab, wird der Lauf
+          # am Ende rot, statt einen grünen Haken an einen Stand zu hängen, der nirgends
+          # läuft.
+          failed=0
+          for uuid in "${uuids[@]}"; do
+            echo "Stoße ${uuid} an …"
+            if curl --fail-with-body --silent --show-error --request POST \
+                --max-time 30 --header @- \
+                "${coolify}/api/v1/deploy?uuid=${uuid}&force=false" \
+                <<< "Authorization: Bearer ${COOLIFY_API_TOKEN}"; then
+              echo
+              echo "- ✅ \`${uuid}\` angestoßen" >> "$summary"
+            else
+              echo
+              echo "::error::Coolify hat das Deployment von ${uuid} abgelehnt."
+              echo "- ❌ \`${uuid}\` abgelehnt" >> "$summary"
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+
+          # 2. Warten, bis jede URL den neuen Stand meldet. Keine feste Anfangspause:
+          # Die erste Abfrage trifft meist noch den alten Container, der zu Recht die alte
+          # Revision nennt, und dann wird eben weiter gefragt.
+          declare -A last=()
+          pending=()
+          for url in "${revision_urls[@]}"; do pending+=("revision ${url}"); done
+          for url in "${plain_urls[@]}"; do pending+=("status ${url}"); done
+
+          if [ "${#pending[@]}" -gt 0 ]; then
+            echo >> "$summary"
+            echo "Warte bis zu ${wait_seconds} s auf ${#pending[@]} URL(s) …"
+          fi
+
+          deadline=$(( SECONDS + wait_seconds ))
+          while [ "${#pending[@]}" -gt 0 ]; do
+            still=()
+            for entry in "${pending[@]}"; do
+              kind="${entry%% *}"
+              url="${entry#* }"
+              body=$(curl --silent --show-error --max-time 10 --write-out '\n%{http_code}' "$url" 2>&1)
+              code="${body##*$'\n'}"
+              body="${body%$'\n'*}"
+              last[$url]="HTTP ${code}: ${body:0:300}"
+              ok=0
+              if [ "$kind" = revision ]; then
+                if [[ "$code" == 2* ]] && grep -Eq "\"revision\"[[:space:]]*:[[:space:]]*\"${revision}\"" <<< "$body"; then ok=1; fi
+              else
+                if [[ "$code" == 2* ]]; then ok=1; fi
+              fi
+              if [ "$ok" -eq 1 ]; then
+                echo "✅ ${url}"
+                echo "- ✅ ${url}" >> "$summary"
+              else
+                still+=("$entry")
+              fi
+            done
+            pending=("${still[@]}")
+            [ "${#pending[@]}" -eq 0 ] && break
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              for entry in "${pending[@]}"; do
+                url="${entry#* }"
+                if [ "${entry%% *}" = revision ]; then
+                  echo "::error::${url} meldet nach ${wait_seconds} s nicht die Revision ${revision}. Letzte Antwort: ${last[$url]}"
+                else
+                  echo "::error::${url} antwortet nach ${wait_seconds} s nicht mit 2xx. Letzte Antwort: ${last[$url]}"
+                fi
+                echo "- ❌ ${url}: ${last[$url]:0:120}" >> "$summary"
+              done
+              exit 1
+            fi
+            echo "… noch ${#pending[@]} offen, $(( deadline - SECONDS )) s übrig"
+            sleep "$interval"
+          done
+
+          echo "Fertig."
