@@ -1,55 +1,55 @@
 name: dependabot-automerge
 
-# Führt Minor- und Patch-Updates von Dependabot zusammen und stößt danach die Pipeline
-# auf main an. Vertrag: README.md, Abschnitt „dependabot-automerge.yml“.
+# Merges minor and patch updates from Dependabot and then triggers the pipeline on main.
+# Contract: README.md, section "dependabot-automerge.yml".
 on:
   workflow_call:
     inputs:
       workflow:
-        description: Workflow-Datei, die nach dem Merge auf main angestoßen wird
+        description: Workflow file triggered on main after the merge
         type: string
         default: ci.yml
 
 jobs:
   automerge:
-    name: Dependabot zusammenführen
-    # Doppelt hält besser: Auch wenn der Aufrufer die Bedingung vergisst, führt dieser
-    # Job nur PRs von Dependabot zusammen.
+    name: Merge Dependabot update
+    # Belt and braces: even if the caller forgets the condition, this job only merges
+    # pull requests from Dependabot.
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Die Berechtigungen gibt der Aufrufer (contents, pull-requests, actions: write).
+    # The caller grants the permissions (contents, pull-requests, actions: write).
     steps:
-      # Der PR-Titel ist nur Text. Was für ein Sprung darin steckt, sagt erst diese
-      # Action. Bei einer Gruppe meldet sie den größten Sprung der Gruppe: Eine
-      # Hauptversion im Bund hält den ganzen PR auf, und das ist die sichere Richtung.
-      - name: Was ändert dieser Pull Request?
-        id: metadaten
+      # The pull request title is just text. Only this action tells what kind of bump it
+      # contains. For a group it reports the largest bump in the group: one major
+      # version in the bundle holds up the whole pull request, which is the safe
+      # direction.
+      - name: What does this pull request change?
+        id: metadata
         uses: dependabot/fetch-metadata@v3
 
-      # Eine Hauptversion bleibt liegen, bis Sascha ihre Changelogs gelesen hat. Ihr PR
-      # steht dann grün und geprüft da und wartet auf einen Klick.
-      - name: Zusammenführen, wenn es keine Hauptversion ist
-        if: steps.metadaten.outputs.update-type != 'version-update:semver-major'
+      # A major version waits until a human has read its changelog. Its pull request
+      # then sits there green and tested, one click away from merging.
+      - name: Merge unless it is a major version
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
         run: gh pr merge --squash --delete-branch "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Ein Push, den GITHUB_TOKEN auslöst, startet keinen Workflow. So verhindert GitHub,
-      # dass Abläufe sich endlos gegenseitig anstoßen. Der Merge oben ist so ein Push: Die
-      # Pipeline würde diesen Stand nie bauen, und die Aktualisierung läge auf main herum,
-      # bis zufällig jemand etwas anderes zusammenführt. `workflow_dispatch` ist die
-      # dokumentierte Ausnahme, deshalb wird die Pipeline hier ausdrücklich angestoßen. Sie
-      # baut den Stand, der dann auf main liegt, also den eben zusammengeführten.
+      # A push made with GITHUB_TOKEN does not start any workflow. That is how GitHub
+      # prevents workflows from triggering each other endlessly. The merge above is such
+      # a push: the pipeline would never build this commit, and the update would sit on
+      # main until someone happens to merge something else. `workflow_dispatch` is the
+      # documented exception, so the pipeline is triggered explicitly here. It builds
+      # whatever is on main at that point, i.e. the commit just merged.
       #
-      # `-R` ist keine Bequemlichkeit: Dieser Job checkt nichts aus, und ohne Arbeitskopie
-      # kann `gh` das Repository nicht ableiten. Es scheitert dann an `fatal: not a git
-      # repository`, und zwar nach dem Merge, sodass die Aktualisierung auf main liegt und
-      # nirgends läuft (Staplerschule, Lauf 31990595275). `gh pr merge` betrifft das nicht,
-      # weil es die URL des Pull Requests bekommt.
-      - name: Pipeline auf main anstoßen
-        if: steps.metadaten.outputs.update-type != 'version-update:semver-major'
+      # `-R` is not a convenience: this job checks nothing out, and without a working
+      # copy `gh` cannot infer the repository. It then fails with `fatal: not a git
+      # repository`, after the merge, so the update lands on main and is never
+      # deployed. `gh pr merge` is not affected because it gets the pull request URL.
+      - name: Trigger the pipeline on main
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
         run: gh workflow run "$WORKFLOW" --ref main -R "$GITHUB_REPOSITORY"
         env:
           WORKFLOW: ${{ inputs.workflow }}

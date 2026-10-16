@@ -1,49 +1,49 @@
 name: docker-image
 
-# Baut ein Image und schiebt es nach ghcr.io. Vertrag: README.md, Abschnitt
-# „docker-image.yml“.
+# Builds an image and pushes it to ghcr.io. Contract: README.md, section
+# "docker-image.yml".
 on:
   workflow_call:
     inputs:
       image:
-        description: Image-Name ohne Tag, z. B. ghcr.io/owner/repo
+        description: Image name without a tag, e.g. ghcr.io/owner/repo
         required: true
         type: string
       dockerfile:
-        description: Pfad zum Dockerfile, vom Repo-Wurzelverzeichnis aus
+        description: Path to the Dockerfile, relative to the repository root
         type: string
         default: Dockerfile
       context:
-        description: Build-Kontext
+        description: Build context
         type: string
         default: .
       target:
-        description: Multi-Stage-Target
+        description: Multi-stage target
         type: string
         default: ""
       build-args:
-        description: Weitere Build-Argumente, eins pro Zeile
+        description: Additional build arguments, one per line
         type: string
         default: ""
       smoke-test:
-        description: Befehl, der nach dem Build mit IMAGE=<sha-Referenz> gegen das Image läuft
+        description: Command run against the image after the build, with IMAGE=<sha reference>
         type: string
         default: ""
     outputs:
       image:
-        description: Die gebaute Referenz mit sha-Tag
+        description: The built reference with the sha tag
         value: ${{ jobs.build.outputs.image }}
 
 jobs:
   build:
-    name: Image bauen
+    name: Build image
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Die Berechtigung gibt der Aufrufer (contents: read, packages: write).
+    # The caller grants the permissions (contents: read, packages: write).
     outputs:
-      image: ${{ steps.namen.outputs.image }}
+      image: ${{ steps.names.outputs.image }}
     steps:
-      # Der Build-Kontext und der Rauchtest liegen im Repo des Aufrufers.
+      # The build context and the smoke test live in the caller's repository.
       - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4
@@ -54,94 +54,94 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Namen festlegen
-        id: namen
+      - name: Determine names
+        id: names
         env:
           IMAGE: ${{ inputs.image }}
         run: |
           set -euo pipefail
-          # ghcr.io nimmt nur Kleinbuchstaben, `github.repository` hat aber die
-          # Schreibweise des Besitzers.
+          # ghcr.io only accepts lowercase, but `github.repository` keeps the owner's
+          # spelling.
           image="${IMAGE,,}"
           if [ -z "$image" ] || [[ "${image##*/}" == *:* ]] || [[ "$image" == *@* ]]; then
-            echo "::error::'image' muss ein Image-Name ohne Tag sein, bekommen: '${IMAGE}'"
+            echo "::error::'image' must be an image name without a tag, got: '${IMAGE}'"
             exit 1
           fi
           {
             echo "name=${image}"
             echo "image=${image}:sha-${GITHUB_SHA::12}"
-            # Einmal festgehalten, damit Build-Argument und Label denselben Zeitpunkt
-            # nennen. Zwei Aufrufe von `date` dürfen auseinanderliegen.
+            # Captured once so that the build argument and the label name the same
+            # moment. Two calls to `date` may differ.
             echo "built-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            # Ein eigener Cache je Image. Sonst verdrängen sich die Zeilen eines
-            # Matrix-Builds gegenseitig aus dem gemeinsamen Standard-Cache.
+            # One cache per image. Otherwise the rows of a matrix build evict each other
+            # from the shared default cache.
             echo "cache-scope=$(printf '%s' "$image" | tr -c 'a-z0-9._-' '-')"
           } >> "$GITHUB_OUTPUT"
 
-      # Mit Rauchtest: erst lokal laden, prüfen und erst dann pushen. Ohne: in einem
-      # Schritt bauen und pushen. Beide Wege nutzen dieselben Parameter; nur `push`
-      # und `load` unterscheiden sich.
-      - name: Bauen
+      # With a smoke test: load locally, test, and only then push. Without: build and
+      # push in one step. Both paths use the same parameters; only `push` and `load`
+      # differ.
+      - name: Build
         uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.context }}
-          # Vom Repo-Wurzelverzeichnis aus, wie `docker build -f`, nicht vom Kontext.
+          # Relative to the repository root, like `docker build -f`, not to the context.
           file: ${{ inputs.dockerfile }}
           target: ${{ inputs.target }}
           push: ${{ inputs.smoke-test == '' }}
           load: ${{ inputs.smoke-test != '' }}
-          # Der Coolify-Server ist ein Hetzner CPX32, also x86. Die Runner auch, damit
-          # baut das nativ statt über QEMU.
+          # The Coolify server is x86, and so are the runners, so this builds natively
+          # instead of through QEMU.
           platforms: linux/amd64
-          # Ohne Provenance-Attestierung ist das Ergebnis ein schlichtes Image statt
-          # eines Index mit einem Eintrag „unknown/unknown“. So sehen beide Wege
-          # (direkt gepusht oder nach dem Rauchtest mit `docker push`) gleich aus.
+          # Without a provenance attestation the result is a plain image instead of an
+          # index with an "unknown/unknown" entry. That way both paths (pushed directly,
+          # or with `docker push` after the smoke test) look the same.
           provenance: false
-          # `sha-…` benennt genau diesen Stand, `main` ist der Zeiger, dem Coolify folgt.
+          # `sha-…` names exactly this commit, `main` is the pointer Coolify follows.
           tags: |
-            ${{ steps.namen.outputs.image }}
-            ${{ steps.namen.outputs.name }}:main
+            ${{ steps.names.outputs.image }}
+            ${{ steps.names.outputs.name }}:main
           build-args: |
             APP_REVISION=${{ github.sha }}
-            APP_BUILT_AT=${{ steps.namen.outputs.built-at }}
+            APP_BUILT_AT=${{ steps.names.outputs.built-at }}
             ${{ inputs.build-args }}
-          # Beantwortet „was liegt in der Registry?“, ohne dass etwas laufen muss:
+          # Answers "what is in the registry?" without running anything:
           # `docker buildx imagetools inspect <image>`.
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.created=${{ steps.namen.outputs.built-at }}
+            org.opencontainers.image.created=${{ steps.names.outputs.built-at }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha,scope=${{ steps.namen.outputs.cache-scope }}
-          cache-to: type=gha,mode=max,scope=${{ steps.namen.outputs.cache-scope }}
+          cache-from: type=gha,scope=${{ steps.names.outputs.cache-scope }}
+          cache-to: type=gha,mode=max,scope=${{ steps.names.outputs.cache-scope }}
 
-      - name: Rauchtest
+      - name: Smoke test
         if: inputs.smoke-test != ''
         env:
-          IMAGE: ${{ steps.namen.outputs.image }}
+          IMAGE: ${{ steps.names.outputs.image }}
           SMOKE_TEST: ${{ inputs.smoke-test }}
         run: bash -eo pipefail -c "$SMOKE_TEST"
 
-      # Genau das Image, das den Rauchtest bestanden hat, nicht ein zweiter Build.
-      - name: Pushen
+      # Exactly the image that passed the smoke test, not a second build.
+      - name: Push
         if: inputs.smoke-test != ''
         env:
-          IMAGE: ${{ steps.namen.outputs.image }}
-          NAME: ${{ steps.namen.outputs.name }}
+          IMAGE: ${{ steps.names.outputs.image }}
+          NAME: ${{ steps.names.outputs.name }}
         run: |
           set -euo pipefail
           docker push "$IMAGE"
           docker push "${NAME}:main"
 
-      - name: Zusammenfassung
+      - name: Summary
         env:
-          IMAGE: ${{ steps.namen.outputs.image }}
-          NAME: ${{ steps.namen.outputs.name }}
+          IMAGE: ${{ steps.names.outputs.image }}
+          NAME: ${{ steps.names.outputs.name }}
           SMOKE_TEST: ${{ inputs.smoke-test }}
         run: |
           {
-            echo "### Image gebaut"
+            echo "### Image built"
             echo
             echo "- \`${IMAGE}\`"
             echo "- \`${NAME}:main\`"
-            if [ -n "$SMOKE_TEST" ]; then echo "- Rauchtest bestanden"; fi
+            if [ -n "$SMOKE_TEST" ]; then echo "- Smoke test passed"; fi
           } >> "$GITHUB_STEP_SUMMARY"

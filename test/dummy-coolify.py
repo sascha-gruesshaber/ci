@@ -1,14 +1,14 @@
-"""Dummy für Coolify und eine ausgelieferte App, für test/coolify-deploy.test.sh.
+"""Dummy for Coolify and a deployed app, used by test/coolify-deploy.test.sh.
 
-POST /api/v1/deploy?uuid=…  wie Coolify: 200 bei gültigem Token, 401 ohne, 404 für
-                            UUIDs, die mit "fehlt" beginnen. GET: 405 wie seit 4.3.2.
-GET  /version               meldet die alte Revision, bis DELAY Sekunden nach dem
-                            ersten Deployment vergangen sind, danach NEW_REVISION.
-GET  /version-spaces        dasselbe mit Leerzeichen um den Doppelpunkt.
+POST /api/v1/deploy?uuid=…  like Coolify: 200 with a valid token, 401 without, 404 for
+                            UUIDs starting with "missing". GET: 405, as since 4.3.2.
+GET  /version               reports the old revision until DELAY seconds have passed
+                            since the first deployment, then NEW_REVISION.
+GET  /version-spaces        the same with spaces around the colon.
 GET  /ok                    200
-GET  /kaputt                503
+GET  /broken                503
 
-Aufruf: python3 dummy-coolify.py <port>, gesteuert über TOKEN, NEW_REVISION, DELAY.
+Usage: python3 dummy-coolify.py <port>, controlled by TOKEN, NEW_REVISION, DELAY.
 """
 
 import json
@@ -18,7 +18,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-TOKEN = os.environ.get("TOKEN", "geheim")
+TOKEN = os.environ.get("TOKEN", "secret")
 NEW_REVISION = os.environ["NEW_REVISION"]
 DELAY = float(os.environ.get("DELAY", "0"))
 OLD_REVISION = "0" * 40
@@ -43,7 +43,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Authorization") != f"Bearer {TOKEN}":
             return self.send(401, '{"message":"Unauthenticated."}')
         uuid = parse_qs(url.query).get("uuid", [""])[0]
-        if uuid.startswith("fehlt"):
+        if uuid.startswith("missing"):
             return self.send(404, '{"message":"Resource not found."}')
         if deployed_at is None:
             deployed_at = time.monotonic()
@@ -61,7 +61,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, '{"status":"ok"}')
         if path == "/api/v1/deploy":
             return self.send(405, '{"message":"Method not allowed."}')
-        if path == "/kaputt":
+        if path == "/broken":
             return self.send(503, "Bad Gateway")
         self.send(404, "{}")
 

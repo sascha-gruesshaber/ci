@@ -1,9 +1,9 @@
 name: selftest
 
-# Probiert die Bausteine so aus, wie ein Projekt sie aufruft, bevor ein neuer v1-Tag
-# gesetzt wird. Nur von Hand: Er pusht nach ghcr.io/sascha-gruesshaber/ci/selftest.
-# coolify-deploy.yml ruft er nicht auf, dafür gibt es keine Test-Anwendung. Dessen Logik
-# prüft test/coolify-deploy.test.sh gegen einen Dummy-Server, hier und in ci.yml.
+# Exercises the building blocks the way a project calls them, before a new v1 tag is
+# set. Manual only: it pushes to ghcr.io/sascha-gruesshaber/ci/selftest.
+# It does not call coolify-deploy.yml, there is no test application for that. Its logic
+# is checked by test/coolify-deploy.test.sh against a dummy server, here and in ci.yml.
 on:
   workflow_dispatch:
 
@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    # Der Stand dieses Branches, nicht @v1.
+    # The state of this branch, not @v1.
     uses: ./.github/workflows/docker-image.yml
     with:
       image: ghcr.io/${{ github.repository }}/selftest
@@ -23,10 +23,10 @@ jobs:
       context: test
       target: runner
       build-args: |
-        SELFTEST_GRUSS=hallo
+        SELFTEST_GREETING=hello
       smoke-test: bash test/smoke-test.sh
 
-  # Liegt das Image wirklich mit beiden Tags in der Registry, und stimmt der Output?
+  # Is the image really in the registry with both tags, and is the output right?
   pushed:
     needs: build
     runs-on: ubuntu-latest
@@ -41,14 +41,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Tags und Labels prüfen
+      - name: Check tags and labels
         env:
           IMAGE: ${{ needs.build.outputs.image }}
         run: |
           set -euo pipefail
           expected="ghcr.io/${GITHUB_REPOSITORY,,}/selftest:sha-${GITHUB_SHA::12}"
           if [ "$IMAGE" != "$expected" ]; then
-            echo "::error::Output image ist '${IMAGE}' statt '${expected}'"
+            echo "::error::Output image is '${IMAGE}' instead of '${expected}'"
             exit 1
           fi
           for ref in "$IMAGE" "${IMAGE%:*}:main"; do
@@ -56,7 +56,7 @@ jobs:
               --format '{{ index .Image.Config.Labels "org.opencontainers.image.revision" }}')
             echo "${ref}: ${revision}"
             if [ "$revision" != "$GITHUB_SHA" ]; then
-              echo "::error::${ref} trägt die Revision '${revision}' statt '${GITHUB_SHA}'"
+              echo "::error::${ref} carries revision '${revision}' instead of '${GITHUB_SHA}'"
               exit 1
             fi
           done

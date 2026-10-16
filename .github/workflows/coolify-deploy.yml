@@ -1,35 +1,35 @@
 name: coolify-deploy
 
-# Stößt Coolify an und wartet, bis der neue Stand wirklich läuft. Vertrag: README.md,
-# Abschnitt „coolify-deploy.yml“.
+# Triggers Coolify and waits until the new commit is actually running. Contract:
+# README.md, section "coolify-deploy.yml".
 on:
   workflow_call:
     inputs:
       uuids:
-        description: UUIDs der Coolify-Anwendungen, durch Leerzeichen oder Zeilen getrennt
+        description: UUIDs of the Coolify applications, separated by spaces or newlines
         required: true
         type: string
       revision-urls:
-        description: URLs, deren Body "revision":"<github.sha>" enthalten muss
+        description: URLs whose body must contain "revision":"<github.sha>"
         type: string
         default: ""
       urls:
-        description: URLs, die nur mit HTTP 2xx antworten müssen
+        description: URLs that only need to answer with HTTP 2xx
         type: string
         default: ""
       environment:
-        description: GitHub-Environment
+        description: GitHub environment
         type: string
         default: production
       environment-url:
-        description: URL, die GitHub am Environment anzeigt
+        description: URL GitHub shows on the environment
         type: string
         default: ""
       coolify-url:
         type: string
         default: https://coolify.gruesshaber.eu
       wait-minutes:
-        description: Wie lange auf die neue Revision gewartet wird
+        description: How long to wait for the new revision
         type: number
         default: 10
     secrets:
@@ -38,26 +38,26 @@ on:
 
 jobs:
   deploy:
-    name: Ausliefern
+    name: Deploy
     runs-on: ubuntu-latest
-    # Das eigentliche Warten begrenzt `wait-minutes` im Skript. Dies ist nur das Netz
-    # darunter; Ausdrücke können nicht rechnen.
+    # The actual waiting is bounded by `wait-minutes` in the script. This is only the
+    # safety net below it; expressions cannot do arithmetic.
     timeout-minutes: 60
     environment:
       name: ${{ inputs.environment }}
       url: ${{ inputs.environment-url }}
-    # Die Container migrieren beim Start. Ein abgebrochenes Deployment kann eine halbe
-    # Migration hinterlassen, deshalb laufen sie nacheinander und nie abgebrochen.
+    # The containers migrate on startup. A cancelled deployment can leave a migration
+    # half done, so deployments run one after another and are never cancelled.
     concurrency:
       group: deploy-${{ github.repository }}
       cancel-in-progress: false
     steps:
-      # Das Skript steht bewusst hier und nicht in einer eigenen Datei: Der Aufrufer
-      # checkt dieses private Repo nicht aus, sein GITHUB_TOKEN darf es nicht lesen.
-      # test/coolify-deploy.test.sh zieht den Block heraus und prüft ihn gegen einen
-      # Dummy-Server. Deshalb stehen darin keine `${{ … }}`-Ausdrücke, alles kommt über
-      # die Umgebung.
-      - name: Anstoßen und prüfen
+      # The script lives here on purpose and not in a separate file: otherwise every
+      # caller would also have to check out this repository at exactly the commit of
+      # the ref it called. test/coolify-deploy.test.sh extracts this block and runs it
+      # against a dummy server. That is why it contains no `${{ … }}` expressions;
+      # everything comes in through the environment.
+      - name: Trigger and verify
         env:
           UUIDS: ${{ inputs.uuids }}
           REVISION_URLS: ${{ inputs.revision-urls }}
@@ -66,30 +66,31 @@ jobs:
           WAIT_MINUTES: ${{ inputs.wait-minutes }}
           COOLIFY_API_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
         run: |
-          # GitHub startet `run` mit `bash -e`. Das muss aus: Ein gescheiterter Abruf beim
-          # Warten (Timeout, Verbindung abgelehnt, während der Container wechselt) ist
-          # eine Antwort wie jede andere und wird wieder versucht, statt den Lauf zu beenden
-          # (PuckHub, Lauf 36485172179: curl-Timeout, Exit 28, alles lief längst).
+          # GitHub starts `run` with `bash -e`. That has to go: a failed request while
+          # waiting (timeout, connection refused while the container is being replaced)
+          # is an answer like any other and is retried instead of ending the run. A
+          # single curl timeout (exit 28) once turned a run red although everything was
+          # long up.
           set +e -uo pipefail
 
           revision="${GITHUB_SHA:?}"
           coolify="${COOLIFY_URL%/}"
-          # Nur für den Test überschreibbar.
+          # Overridable for the test only.
           interval="${POLL_INTERVAL:-10}"
           wait_seconds="${WAIT_SECONDS:-$(( WAIT_MINUTES * 60 ))}"
           summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
-          # Trennt an Leerzeichen und Zeilenumbrüchen, ohne Globbing.
+          # Splits on spaces and newlines, without globbing.
           read -r -d '' -a uuids <<< "$UUIDS" || true
           read -r -d '' -a revision_urls <<< "$REVISION_URLS" || true
           read -r -d '' -a plain_urls <<< "$URLS" || true
 
           if [ "${#uuids[@]}" -eq 0 ]; then
-            echo "::error::Keine Coolify-UUID übergeben. Fehlt die Repo-Variable COOLIFY_UUID (bzw. COOLIFY_UUID_<APP>)?"
+            echo "::error::No Coolify UUID given. Is the repository variable COOLIFY_UUID (or COOLIFY_UUID_<APP>) missing?"
             exit 1
           fi
           if [ -z "${COOLIFY_API_TOKEN:-}" ]; then
-            echo "::error::Das Secret COOLIFY_API_TOKEN ist leer."
+            echo "::error::The secret COOLIFY_API_TOKEN is empty."
             exit 1
           fi
 
@@ -100,24 +101,24 @@ jobs:
             echo
           } >> "$summary"
 
-          # 1. Anstoßen. POST mit den Parametern in der Query, so steht es in Coolifys
-          # OpenAPI-Spezifikation. GET antwortet seit Coolify 4.3.2 mit 405, ein JSON-Body
-          # läuft ins Leere. Jede UUID wird versucht; lehnt Coolify eine ab, wird der Lauf
-          # am Ende rot, statt einen grünen Haken an einen Stand zu hängen, der nirgends
-          # läuft.
+          # 1. Trigger. POST with the parameters in the query string, as Coolify's
+          # OpenAPI specification says. GET has answered 405 since Coolify 4.3.2, and a
+          # JSON body is ignored. Every UUID is tried; if Coolify rejects one, the run
+          # ends red instead of putting a green check mark on a commit that runs
+          # nowhere.
           failed=0
           for uuid in "${uuids[@]}"; do
-            echo "Stoße ${uuid} an …"
+            echo "Triggering ${uuid} …"
             if curl --fail-with-body --silent --show-error --request POST \
                 --max-time 30 --header @- \
                 "${coolify}/api/v1/deploy?uuid=${uuid}&force=false" \
                 <<< "Authorization: Bearer ${COOLIFY_API_TOKEN}"; then
               echo
-              echo "- ✅ \`${uuid}\` angestoßen" >> "$summary"
+              echo "- ✅ \`${uuid}\` triggered" >> "$summary"
             else
               echo
-              echo "::error::Coolify hat das Deployment von ${uuid} abgelehnt."
-              echo "- ❌ \`${uuid}\` abgelehnt" >> "$summary"
+              echo "::error::Coolify rejected the deployment of ${uuid}."
+              echo "- ❌ \`${uuid}\` rejected" >> "$summary"
               failed=1
             fi
           done
@@ -125,9 +126,9 @@ jobs:
             exit 1
           fi
 
-          # 2. Warten, bis jede URL den neuen Stand meldet. Keine feste Anfangspause:
-          # Die erste Abfrage trifft meist noch den alten Container, der zu Recht die alte
-          # Revision nennt, und dann wird eben weiter gefragt.
+          # 2. Wait until every URL reports the new commit. No fixed initial pause: the
+          # first request usually still hits the old container, which rightly reports
+          # the old revision, and then we simply keep asking.
           declare -A last=()
           pending=()
           for url in "${revision_urls[@]}"; do pending+=("revision ${url}"); done
@@ -135,7 +136,7 @@ jobs:
 
           if [ "${#pending[@]}" -gt 0 ]; then
             echo >> "$summary"
-            echo "Warte bis zu ${wait_seconds} s auf ${#pending[@]} URL(s) …"
+            echo "Waiting up to ${wait_seconds} s for ${#pending[@]} URL(s) …"
           fi
 
           deadline=$(( SECONDS + wait_seconds ))
@@ -167,16 +168,16 @@ jobs:
               for entry in "${pending[@]}"; do
                 url="${entry#* }"
                 if [ "${entry%% *}" = revision ]; then
-                  echo "::error::${url} meldet nach ${wait_seconds} s nicht die Revision ${revision}. Letzte Antwort: ${last[$url]}"
+                  echo "::error::${url} does not report revision ${revision} after ${wait_seconds} s. Last response: ${last[$url]}"
                 else
-                  echo "::error::${url} antwortet nach ${wait_seconds} s nicht mit 2xx. Letzte Antwort: ${last[$url]}"
+                  echo "::error::${url} does not answer with 2xx after ${wait_seconds} s. Last response: ${last[$url]}"
                 fi
                 echo "- ❌ ${url}: ${last[$url]:0:120}" >> "$summary"
               done
               exit 1
             fi
-            echo "… noch ${#pending[@]} offen, $(( deadline - SECONDS )) s übrig"
+            echo "… ${#pending[@]} still pending, $(( deadline - SECONDS )) s left"
             sleep "$interval"
           done
 
-          echo "Fertig."
+          echo "Done."
