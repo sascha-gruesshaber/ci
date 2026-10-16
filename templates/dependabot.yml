@@ -1,6 +1,6 @@
-# Vorlage aus sascha-gruesshaber/ci. `package-ecosystem` im ersten Block an das Projekt
-# anpassen (npm, bun; pnpm-Projekte nutzen "npm"), Gruppen für Pakete, die sich nur
-# gemeinsam bewegen dürfen, ergänzen.
+# Template from sascha-gruesshaber/ci. Adjust `package-ecosystem` in the first block to
+# the project (npm, bun; pnpm projects use "npm"), and add groups for packages that may
+# only move together.
 version: 2
 
 updates:
@@ -11,14 +11,14 @@ updates:
       day: monday
       time: "05:00"
       timezone: Europe/Berlin
-    # Kaputte Releases werden meist in den ersten Tagen zurückgezogen. Sicherheitsupdates
-    # laufen an der Wartezeit vorbei.
+    # Broken releases are usually pulled within the first few days. Security updates
+    # bypass the cooldown.
     cooldown:
       default-days: 7
-    # Alles Kleine in einem PR: ein CI-Lauf, ein Merge, ein Deployment. Hauptversionen
-    # bekommen je einen eigenen PR und werden nicht automatisch zusammengeführt.
+    # Everything small in one pull request: one CI run, one merge, one deployment. Major
+    # versions get a pull request each and are not merged automatically.
     groups:
-      minor-und-patch:
+      minor-and-patch:
         patterns: ["*"]
         update-types: [minor, patch]
     open-pull-requests-limit: 5

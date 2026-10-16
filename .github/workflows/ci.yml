@@ -20,12 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Das offizielle Download-Skript holt die neueste Version. actionlint prüft mit
-      # shellcheck (auf den Runnern vorhanden) auch die `run`-Blöcke.
+      # The official download script fetches the latest release. actionlint also checks
+      # the `run` blocks with shellcheck (preinstalled on the runners).
       - name: actionlint
         run: |
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
           ./actionlint -color
 
-      - name: Deploy-Skript gegen den Dummy-Server
+      - name: Deploy script against the dummy server
         run: bash test/coolify-deploy.test.sh

@@ -1,13 +1,15 @@
 # ci
 
-Wiederverwendbare GitHub-Actions-Workflows für Saschas Projekte (PuckHub, Recook,
-Staplerschule Kittel). Der Standard und die Schnittstellen stehen in `README.md`. Diese
-README ist der Vertrag mit den Projekten: Was dort steht, muss so funktionieren.
+Reusable GitHub Actions workflows for the projects of sascha-gruesshaber. The standard
+and the interfaces are described in `README.md`. That README is the contract with the
+projects: whatever it says must work exactly that way.
 
-- Die Workflows liegen unter `.github/workflows/` und haben `on: workflow_call`.
-- Aufgerufen werden sie mit `@v1`. Nach einer Änderung, die in `main` gelandet ist, wird
-  ein neuer `v1.x.y`-Tag gesetzt und `v1` darauf verschoben. Inkompatible Änderungen gibt
-  es nur als `v2`.
-- Jede Änderung trifft alle Projekte gleichzeitig. Deshalb Inputs nur ergänzen, mit
-  Standardwert, nie umbenennen oder entfernen.
-- Die CI dieses Repos prüft die Workflows mit `actionlint`.
+- The workflows live in `.github/workflows/` and use `on: workflow_call`.
+- They are called with `@v1`. After a change has landed on `main`, a new `v1.x.y` tag is
+  set and `v1` is moved to it. Incompatible changes only ship as `v2`.
+- Every change hits all projects at once. So only add inputs, with a default value;
+  never rename or remove them.
+- This repository's CI checks the workflows with `actionlint`.
+- This repository is public (see "Access" in the README). Never put secrets, internal
+  addresses or project-specific values in it.
+- Everything in this repository is written in English.

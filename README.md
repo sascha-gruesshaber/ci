@@ -1,28 +1,29 @@
 # ci
 
-Gemeinsame GitHub-Actions-Bausteine und der CI-Standard für Saschas Node-Projekte
-(PuckHub, Recook, Staplerschule Kittel). Die Tests bleiben in jedem Projekt, weil sie
-projektspezifisch sind. Bauen, Ausliefern und das Einspielen von Aktualisierungen kommen
-von hier, damit alle Projekte gleich funktionieren.
+Shared GitHub Actions building blocks and the CI standard for the Node projects of
+sascha-gruesshaber. Tests stay in each project because they are project-specific.
+Building, deploying and applying updates come from here, so that all projects work the
+same way.
 
-## Der Ablauf in jedem Projekt
+## The flow in every project
 
 ```
-Pull Request ──► check ──► e2e                     (nur prüfen, nichts bauen)
-push main    ──► check ──► e2e ──► build ──► deploy (Image bauen, auf Coolify ausliefern)
+pull request ──► check ──► e2e                     (check only, build nothing)
+push main    ──► check ──► e2e ──► build ──► deploy (build image, deploy to Coolify)
 ```
 
-- Es gibt **eine** Umgebung: `main` ist live.
-- Änderungen kommen nur per Pull Request und **Squash-Merge**. Der PR-Titel wird zum
-  Commit-Titel, die PR-Beschreibung zur Commit-Nachricht, der Branch wird danach gelöscht.
-- Images werden **nur auf `main`** gebaut, nicht in Pull Requests. Scheitert der Build,
-  wird nicht ausgeliefert, und die laufende Version bleibt stehen.
+- There is **one** environment: `main` is live.
+- Changes only arrive through pull requests and **squash merges**. The pull request
+  title becomes the commit title, the description becomes the commit message, and the
+  branch is deleted afterwards.
+- Images are built **only on `main`**, never in pull requests. If the build fails,
+  nothing is deployed and the running version stays in place.
 
-## Der Standard
+## The standard
 
-### Workflow-Datei
+### Workflow file
 
-Jedes Projekt hat genau eine Pipeline: `.github/workflows/ci.yml`.
+Every project has exactly one pipeline: `.github/workflows/ci.yml`.
 
 ```yaml
 on:
@@ -33,73 +34,75 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  # Ein neuer Push auf einen PR bricht den alten Lauf ab, auf main nie.
+  # A new push to a pull request cancels the old run, on main never.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 ```
 
-Jobs mit genau diesen Namen (fehlt einer, weil das Projekt ihn nicht braucht, entfällt er):
+Jobs with exactly these names (if a project does not need one, it is left out):
 
-| Job | Wann | Inhalt |
+| Job | When | Content |
 |---|---|---|
-| `check` | immer | Lint, Typen, Unit-Tests, Migrations-Checks. Projektspezifisch. |
-| `e2e` | immer | Playwright o. Ä. Projektspezifisch. |
-| `build` | nur push auf `main` | `uses: sascha-gruesshaber/ci/.github/workflows/docker-image.yml@v1` |
-| `deploy` | nur push auf `main` | `uses: sascha-gruesshaber/ci/.github/workflows/coolify-deploy.yml@v1` |
-| `automerge` | nur Dependabot-PRs | `uses: sascha-gruesshaber/ci/.github/workflows/dependabot-automerge.yml@v1` |
+| `check` | always | Lint, types, unit tests, migration checks. Project-specific. |
+| `e2e` | always | Playwright or similar. Project-specific. |
+| `build` | push to `main` only | `uses: sascha-gruesshaber/ci/.github/workflows/docker-image.yml@v1` |
+| `deploy` | push to `main` only | `uses: sascha-gruesshaber/ci/.github/workflows/coolify-deploy.yml@v1` |
+| `automerge` | Dependabot pull requests only | `uses: sascha-gruesshaber/ci/.github/workflows/dependabot-automerge.yml@v1` |
 
-Weitere Regeln:
+Further rules:
 
-- Jeder Job hat `timeout-minutes`.
-- Node 24, `actions/setup-node` mit Paketmanager-Cache.
-- Actions auf ihrer aktuellen Hauptversion. Dependabot hält sie aktuell.
-- Keine Tag-Trigger (`v*`), keine Releases, keine zweite Umgebung.
+- Every job has `timeout-minutes`.
+- Node 24, `actions/setup-node` with the package manager cache.
+- Actions on their current major version. Dependabot keeps them up to date.
+- No tag triggers (`v*`), no releases, no second environment.
 
 ### Images
 
 | | Name | Tags |
 |---|---|---|
-| Projekt mit einer App | `ghcr.io/<owner>/<repo>` | `main`, `sha-<12 Zeichen>` |
-| Projekt mit mehreren Apps | `ghcr.io/<owner>/<repo>/<app>` | `main`, `sha-<12 Zeichen>` |
+| Project with one app | `ghcr.io/<owner>/<repo>` | `main`, `sha-<12 characters>` |
+| Project with several apps | `ghcr.io/<owner>/<repo>/<app>` | `main`, `sha-<12 characters>` |
 
-Coolify folgt immer dem Tag `main`. Gebaut wird für `linux/amd64`, ohne Provenance-Attestierung
-(ein schlichtes Image, kein Index mit „unknown/unknown“). Jedes Image bekommt die Build-Argumente
-`APP_REVISION` (volle Commit-SHA) und `APP_BUILT_AT` (ISO-Zeit, UTC) sowie die
-OCI-Labels `org.opencontainers.image.revision`, `.created` und `.source`.
+Coolify always follows the `main` tag. Images are built for `linux/amd64`, without a
+provenance attestation (a plain image, not an index with "unknown/unknown"). Every image
+gets the build arguments `APP_REVISION` (full commit SHA) and `APP_BUILT_AT` (ISO time,
+UTC) as well as the OCI labels `org.opencontainers.image.revision`, `.created` and
+`.source`.
 
 ### Revision
 
-Jede ausgelieferte App mit HTTP-Endpoint meldet, welcher Stand läuft. Dazu enthält ihr
-Health-Endpoint (oder `/version`) im JSON-Body genau:
+Every deployed app with an HTTP endpoint reports which commit is running. Its health
+endpoint (or `/version`) contains exactly this in its JSON body:
 
 ```json
-"revision":"<volle 40-stellige Commit-SHA>"
+"revision":"<full 40-character commit SHA>"
 ```
 
-Der Wert kommt aus `APP_REVISION`. Nur so kann `deploy` erkennen, dass wirklich der
-neue Stand läuft und nicht der alte Container weiter antwortet. Für eine rein statische
-App reicht eine beim Build erzeugte `/version.json` mit demselben Feld.
+The value comes from `APP_REVISION`. That is the only way `deploy` can tell that the new
+commit is really running and not the old container still answering. For a purely static
+app, a `/version.json` generated at build time with the same field is enough.
 
 ### Coolify
 
-- Secret `COOLIFY_API_TOKEN` im Projekt-Repo.
-- UUIDs der Coolify-*Anwendungen* als Repo-Variablen: `COOLIFY_UUID` bei einer App,
-  `COOLIFY_UUID_<APP>` (Großbuchstaben, `-` wird `_`) bei mehreren.
-- GitHub-Environment `production` mit der öffentlichen URL.
+- Secret `COOLIFY_API_TOKEN` in the project repository.
+- UUIDs of the Coolify *applications* as repository variables: `COOLIFY_UUID` for one
+  app, `COOLIFY_UUID_<APP>` (uppercase, `-` becomes `_`) for several.
+- GitHub environment `production` with the public URL.
 
 ### Dependabot
 
-`.github/dependabot.yml` nach der Vorlage in [`templates/dependabot.yml`](templates/dependabot.yml):
-Paketmanager und `github-actions`, wöchentlich montags 05:00 Berliner Zeit, 7 Tage
-Wartezeit nach einem Release, alle Minor- und Patch-Updates in einem PR, Hauptversionen
-einzeln. Minor und Patch führt `automerge` nach grüner CI selbst zusammen, Hauptversionen
-bleiben liegen, bis Sascha sie liest.
+`.github/dependabot.yml` following the template in
+[`templates/dependabot.yml`](templates/dependabot.yml): the package manager and
+`github-actions`, weekly on Mondays at 05:00 Berlin time, a 7-day cooldown after a
+release, all minor and patch updates in one pull request, major versions separately.
+`automerge` merges minor and patch updates itself once CI is green; major versions wait
+for a human to review them.
 
-## Die Bausteine
+## The building blocks
 
-Aufruf immer mit `@v1`. `v1` ist ein beweglicher Tag auf dem neuesten `v1.x.y`.
-Inkompatible Änderungen gibt es nur als `v2`.
+Always call them with `@v1`. `v1` is a moving tag on the latest `v1.x.y`. Incompatible
+changes only ship as `v2`.
 
-### `docker-image.yml`: Image bauen und pushen
+### `docker-image.yml`: build and push an image
 
 ```yaml
 build:
@@ -110,32 +113,32 @@ build:
     packages: write
   uses: sascha-gruesshaber/ci/.github/workflows/docker-image.yml@v1
   with:
-    image: ghcr.io/${{ github.repository }}   # ohne Tag
-    # dockerfile: Dockerfile                  # Standard
-    # context: .                              # Standard
-    # target: api-runner                      # Multi-Stage-Target, optional
-    # build-args: |                           # zusätzliche Build-Argumente, optional
+    image: ghcr.io/${{ github.repository }}   # without a tag
+    # dockerfile: Dockerfile                  # default
+    # context: .                              # default
+    # target: api-runner                      # multi-stage target, optional
+    # build-args: |                           # additional build arguments, optional
     #   VITE_API_URL=https://api.example.org
-    # smoke-test: ./scripts/smoke-test.sh     # optional, siehe unten
+    # smoke-test: ./scripts/smoke-test.sh     # optional, see below
 ```
 
-| Input | Pflicht | Standard | Bedeutung |
+| Input | Required | Default | Meaning |
 |---|---|---|---|
-| `image` | ja | | Image-Name ohne Tag |
-| `dockerfile` | | `Dockerfile` | Pfad zum Dockerfile, vom Repo-Wurzelverzeichnis aus (wie `docker build -f`), nicht vom `context` |
-| `context` | | `.` | Build-Kontext |
-| `target` | | leer | Multi-Stage-Target |
-| `build-args` | | leer | weitere Build-Argumente, eins pro Zeile |
-| `smoke-test` | | leer | Befehl, der nach dem Build gegen das Image läuft |
+| `image` | yes | | Image name without a tag |
+| `dockerfile` | | `Dockerfile` | Path to the Dockerfile, relative to the repository root (like `docker build -f`), not to the `context` |
+| `context` | | `.` | Build context |
+| `target` | | empty | Multi-stage target |
+| `build-args` | | empty | Additional build arguments, one per line |
+| `smoke-test` | | empty | Command run against the image after the build |
 
-Output `image`: die gebaute Referenz mit `sha-…`-Tag.
+Output `image`: the built reference with the `sha-…` tag.
 
-`smoke-test` läuft im ausgecheckten Repo mit gesetzter Umgebungsvariable `IMAGE`, bevor
-etwas gepusht wird. Schlägt er fehl, wird nichts gepusht.
+`smoke-test` runs in the checked-out repository with the environment variable `IMAGE`
+set, before anything is pushed. If it fails, nothing is pushed.
 
-Mehrere Apps: Den Job mit `strategy.matrix` aufrufen, eine Matrix-Zeile pro App.
+Several apps: call the job with `strategy.matrix`, one matrix row per app.
 
-### `coolify-deploy.yml`: ausliefern und prüfen
+### `coolify-deploy.yml`: deploy and verify
 
 ```yaml
 deploy:
@@ -149,35 +152,37 @@ deploy:
     COOLIFY_API_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
 ```
 
-| Input | Pflicht | Standard | Bedeutung |
+| Input | Required | Default | Meaning |
 |---|---|---|---|
-| `uuids` | ja | | UUIDs der Coolify-Anwendungen, durch Leerzeichen oder Zeilen getrennt |
-| `revision-urls` | | leer | URLs, deren Body `"revision":"<github.sha>"` enthalten muss |
-| `urls` | | leer | URLs, die nur mit HTTP 2xx antworten müssen |
-| `environment` | | `production` | GitHub-Environment |
-| `environment-url` | | leer | URL, die GitHub am Environment anzeigt |
+| `uuids` | yes | | UUIDs of the Coolify applications, separated by spaces or newlines |
+| `revision-urls` | | empty | URLs whose body must contain `"revision":"<github.sha>"` |
+| `urls` | | empty | URLs that only need to answer with HTTP 2xx |
+| `environment` | | `production` | GitHub environment |
+| `environment-url` | | empty | URL GitHub shows on the environment |
 | `coolify-url` | | `https://coolify.gruesshaber.eu` | |
-| `wait-minutes` | | `10` | wie lange auf die neue Revision gewartet wird, höchstens 55 (der Job hat 60 Minuten) |
+| `wait-minutes` | | `10` | How long to wait for the new revision, at most 55 (the job has 60 minutes) |
 
-Stößt jede Anwendung per `POST /api/v1/deploy?uuid=…&force=false` an. Lehnt Coolify ab,
-wird der Lauf rot. Danach wird jede URL so lange abgefragt, bis sie die neue Revision
-meldet bzw. antwortet. Es gibt keine feste Wartezeit. Läuft nach `wait-minutes` noch der
-alte Stand, wird der Lauf rot.
+Triggers each application with `POST /api/v1/deploy?uuid=…&force=false`. If Coolify
+rejects one, the run turns red. Then every URL is polled until it reports the new
+revision or answers, respectively. There is no fixed waiting time. If the old commit is
+still running after `wait-minutes`, the run turns red.
 
-Deployments eines Repos laufen nacheinander, und ein laufendes wird nie abgebrochen, weil
-die Container beim Start migrieren. Kommen während eines Deployments mehrere neue dazu,
-wartet nur das neueste; die dazwischen verfallen (so arbeitet GitHubs `concurrency`). Das
-schadet nicht, denn alle liefern ohnehin den Tag `main` aus.
+Deployments of a repository run one after another, and a running one is never
+cancelled, because the containers migrate on startup. If several new ones arrive during
+a deployment, only the newest waits; the ones in between are dropped (that is how
+GitHub's `concurrency` works). That does no harm, since they all deploy the `main` tag
+anyway.
 
-Eine leere `uuids`-Liste ist ein Fehler („Repo-Variable fehlt?“). Werden mehrere Variablen
-zu einer Liste verbunden, fällt eine einzelne fehlende nicht auf, sie verschwindet im
-Leerraum. Dann meldet höchstens die zugehörige `revision-url` die alte Revision.
+An empty `uuids` list is an error ("repository variable missing?"). When several
+variables are joined into one list, a single missing one goes unnoticed; it disappears
+in the whitespace. In that case at most the matching `revision-url` reports the old
+revision.
 
-Wichtig bei mehreren Apps mit Pfadfilter: In `revision-urls` gehören nur die Apps, die in
-diesem Lauf auch gebaut wurden. Eine nicht neu gebaute App meldet zu Recht die alte
-Revision.
+Important for several apps with a path filter: `revision-urls` must only contain the
+apps that were actually built in this run. An app that was not rebuilt rightly reports
+the old revision.
 
-### `dependabot-automerge.yml`: Aktualisierungen einspielen
+### `dependabot-automerge.yml`: apply updates
 
 ```yaml
 automerge:
@@ -190,29 +195,37 @@ automerge:
   uses: sascha-gruesshaber/ci/.github/workflows/dependabot-automerge.yml@v1
 ```
 
-| Input | Pflicht | Standard | Bedeutung |
+| Input | Required | Default | Meaning |
 |---|---|---|---|
-| `workflow` | | `ci.yml` | Workflow-Datei, die nach dem Merge auf `main` angestoßen wird |
+| `workflow` | | `ci.yml` | Workflow file triggered on `main` via `workflow_dispatch` after the merge |
 
-Führt Minor- und Patch-Updates per Squash zusammen, Hauptversionen nicht. Danach startet
-es `workflow` auf `main` per `workflow_dispatch`. Das ist nötig, weil ein Merge mit
-`GITHUB_TOKEN` keinen Push-Workflow auslöst und die Aktualisierung sonst nie ausgeliefert
-würde.
+Squash-merges minor and patch updates, but not major versions. Then it starts
+`workflow` on `main` via `workflow_dispatch`. That is necessary because a merge made
+with `GITHUB_TOKEN` does not trigger a push workflow, and the update would otherwise
+never be deployed.
 
-## Neue Version veröffentlichen
+## Publishing a new version
 
-1. Änderung per PR nach `main`. Die CI prüft mit `actionlint` und lässt
-   `test/coolify-deploy.test.sh` laufen, die Deploy-Logik gegen einen Dummy-Server. Lokal
-   genauso: `bash test/coolify-deploy.test.sh`.
-2. Auf `main` den Workflow `selftest` von Hand starten (`gh workflow run selftest.yml`).
-   Er baut `test/Dockerfile` mit Rauchtest über `docker-image.yml`, pusht nach
-   `ghcr.io/sascha-gruesshaber/ci/selftest` und prüft Tags und Labels in der Registry.
-3. Ist er grün, einen neuen `v1.x.y`-Tag setzen und `v1` auf denselben Commit verschieben
+1. Change via pull request to `main`. CI checks with `actionlint` and runs
+   `test/coolify-deploy.test.sh`, the deploy logic against a dummy server. Locally the
+   same: `bash test/coolify-deploy.test.sh`.
+2. On `main`, start the `selftest` workflow by hand (`gh workflow run selftest.yml`).
+   It builds `test/Dockerfile` with a smoke test through `docker-image.yml`, pushes to
+   `ghcr.io/sascha-gruesshaber/ci/selftest` and checks the tags and labels in the
+   registry.
+3. If it is green, set a new `v1.x.y` tag and move `v1` to the same commit
    (`git push -f origin v1`).
 
-## Zugriff
+## Access
 
-Das Repo ist privat. Unter Settings → Actions → General → Access steht „Accessible from
-repositories owned by the user“, damit die anderen privaten Repos die Workflows nutzen
-dürfen. Auschecken können sie dieses Repo damit nicht, ihr `GITHUB_TOKEN` reicht dafür
-nicht. Deshalb stehen die Skripte direkt in den Workflows und nicht in eigenen Dateien.
+This repository is public. While it was private, Dependabot in the projects could not
+read its tags: the weekly `github-actions` run failed with
+`git_dependencies_not_reachable`. A personal account (as opposed to an organization)
+has no setting that grants Dependabot access to other private repositories.
+
+So nothing belongs here that is secret or specific to one project: no secrets, no
+internal addresses, no Coolify UUIDs. Those stay as secrets and variables in the project
+repositories.
+
+The scripts still live directly in the workflows and not in separate files. Otherwise
+every call would also have to check out this repository, at exactly the commit of `@v1`.
