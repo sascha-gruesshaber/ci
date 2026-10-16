@@ -212,7 +212,13 @@ würde.
 
 ## Zugriff
 
-Das Repo ist privat. Unter Settings → Actions → General → Access steht „Accessible from
-repositories owned by the user“, damit die anderen privaten Repos die Workflows nutzen
-dürfen. Auschecken können sie dieses Repo damit nicht, ihr `GITHUB_TOKEN` reicht dafür
-nicht. Deshalb stehen die Skripte direkt in den Workflows und nicht in eigenen Dateien.
+Das Repo ist öffentlich. Solange es privat war, kam Dependabot in den Projekten nicht an
+seine Tags: Der `github-actions`-Lauf brach jede Woche mit `git_dependencies_not_reachable`
+ab. Ein persönliches Konto (keine Organisation) hat keine Einstellung, die Dependabot den
+Zugriff auf andere private Repos erlaubt.
+
+Deshalb gehören hier keine Secrets, internen Adressen, Coolify-UUIDs oder anderen
+projektspezifischen Werte hinein. Die bleiben als Secrets und Variablen in den Projekt-Repos.
+
+Die Skripte stehen weiter direkt in den Workflows und nicht in eigenen Dateien. Sonst
+müsste jeder Aufruf dieses Repo zusätzlich auschecken, und zwar auf genau dem Stand von `@v1`.

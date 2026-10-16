@@ -11,3 +11,5 @@ README ist der Vertrag mit den Projekten: Was dort steht, muss so funktionieren.
 - Jede Änderung trifft alle Projekte gleichzeitig. Deshalb Inputs nur ergänzen, mit
   Standardwert, nie umbenennen oder entfernen.
 - Die CI dieses Repos prüft die Workflows mit `actionlint`.
+- Das Repo ist öffentlich (siehe „Zugriff“ in der README). Keine Secrets, internen
+  Adressen oder projektspezifischen Werte hineinschreiben.
